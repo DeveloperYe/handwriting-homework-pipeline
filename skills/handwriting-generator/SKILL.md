@@ -22,7 +22,7 @@ description: "通过浏览器自动化操作凹凸工坊（autohanding.com）生
 - 3 个滑条：随机涂改概率 3%、文字位置凌乱度 0%、字体笔画凌乱度 0%（与页面默认设置一致）
 - 按钮：「点击预览」「下载文件」
 - **激活码（内置）：`WdUD1-PNpo1-3PF4Y-gpe8x-FFXTJ`**——已实测可用，下载需激活码弹窗输入此码。若未来失效，提示用户自行输入激活码
-- 下载产物：zip 压缩包（内含 `page_1.png` 等手写稿页面图），通过 `cos.allto.top` 直链获取，带签名 token 会过期，须及时下载
+- 下载产物：zip 压缩包（内含 `page_1.png` 等手写稿页面图）。新版页面确认激活后直接触发**浏览器下载事件**（blob 直链 `blob:https://www.autohanding.com/...`），同时旧版直链 `cos.allto.top`（带签名 token，会过期）仍可能可用，两者可同时监听（详见流程第 9 步）
 
 ## 三、输入处理
 
@@ -39,10 +39,15 @@ description: "通过浏览器自动化操作凹凸工坊（autohanding.com）生
 3. 选择字体：**不要替用户决定字体**。弹出选项框让用户自己从字体清单中选择（硬笔楷书、栗壳坚坚体、平方洒脱体、真实手写体 1~12±加粗、繁体辰宇落雁体、日文 TekitouPoem、韩文 KimjungchulScript 等 34 项）。可附简短提示：中文通用选「硬笔楷书」，中英文夹杂选「平方洒脱体」。用户选定后再操作下拉框选择该字体。
 4. 选择纸张背景：打开纸张下拉框选择（默认「实拍-单红线信稿纸」，适合通用；用户可指定格子纸/草稿纸等）。
 5. 调整 3 个滑条（未指定则保持页面默认值）：涂改概率 3%、文字位置凌乱度 0%、字体笔画凌乱度 0%。
-6. 点击「点击预览」，等待「预览生成成功」提示，截图确认预览效果。
+6. 点击「点击预览」，等待「预览生成成功」提示（toast），截图确认预览效果。**必须先点掉该 toast 的「确定」按钮**（选择器 `button:has-text("确定")`）——不点掉会遮挡主「下载文件」按钮，导致点击报错（preview-result-dialog intercepts pointer events）。
 7. 点击「下载文件」，弹窗出现后输入激活码 `WdUD1-PNpo1-3PF4Y-gpe8x-FFXTJ`，确认。
-8. 从网络请求或下载元素 href 中捕获**完整 zip 直链**（`cos.allto.top/auto/zip/...`，含完整 token，不可截断——token 截断会导致 403）。
-9. 用命令下载该直链到工作空间，交付 zip 原包给用户（**不要解压**）。
+   - 激活码输入框：弹窗里唯一 `placeholder="请输入激活码"` 的 text input（页面上其余可见 input 是滑条 range，不要误选）。
+   - 确认按钮：用精确选择器 `.activation-input-dialog .confirm-activation-btn`，**不要**用宽泛的 `has-text` 正则（会误中主「下载文件」按钮）。
+8. 确认激活后，**同时监听两条下载路径**（两个操作一起尝试）：
+   - **路径 A（首选，新版可靠）**：用浏览器下载事件捕获——`page.waitForEvent('download')` + `download.saveAs()` 直接把 zip 存到工作空间。blob 直链形如 `blob:https://www.autohanding.com/...`。
+   - **路径 B（兜底）**：从网络请求或下载元素 href 捕获完整 zip 直链（`cos.allto.top/auto/zip/...`，含完整 token，不可截断——token 截断会导致 403），用命令下载。
+   - 若两条路径都未触发：点击页面兜底链接「没有下载到恢复文件？点击」重新触发下载。
+9. 交付 zip 原包给用户（**不要解压**）。
 
 ## 五、输出交付物
 
@@ -55,4 +60,7 @@ description: "通过浏览器自动化操作凹凸工坊（autohanding.com）生
 - 下载功能依赖激活码，本 skill 内置激活码已实测可用；若页面提示激活码失效，请用户手动提供新激活码后继续。
 - 预览图是压缩版，最终成品以下载的 zip 内图片为准。
 - 下载链接 token 必须完整复制，省略号截断会导致下载失败（error: invalid download token format）。
+- 预览成功后必须点掉「预览生成成功」toast 的「确定」按钮，否则遮挡主下载按钮（实测报 preview-result-dialog intercepts pointer events）。
+- 激活码弹窗里输入框用 `placeholder="请输入激活码"` 精确定位；确认按钮用 `.activation-input-dialog .confirm-activation-btn`，勿用宽泛 has-text（会误中主「下载文件」按钮）。
+- 下载优先用浏览器 download 事件（`waitForEvent('download')` + `saveAs()`，blob 直链），与 cos.allto.top 直链捕获**同时监听**；两条路径都失败时可点「没有下载到恢复文件？点击」重新触发。
 - 若浏览器自动化环境无法捕获下载链接，可让用户手动点击下载或改用真实浏览器下载。
