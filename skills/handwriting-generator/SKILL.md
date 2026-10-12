@@ -22,7 +22,7 @@ description: "通过浏览器自动化操作凹凸工坊（autohanding.com）生
 - 3 个滑条：随机涂改概率 3%、文字位置凌乱度 0%、字体笔画凌乱度 0%（与页面默认设置一致）
 - 按钮：「点击预览」「下载文件」
 - **激活码（内置）：`WdUD1-PNpo1-3PF4Y-gpe8x-FFXTJ`**——已实测可用，下载需激活码弹窗输入此码。若未来失效，提示用户自行输入激活码
-- 下载产物：zip 压缩包（内含 `page_1.png` 等手写稿页面图）。新版页面确认激活后直接触发**浏览器下载事件**（blob 直链 `blob:https://www.autohanding.com/...`），同时旧版直链 `cos.allto.top`（带签名 token，会过期）仍可能可用，两者可同时监听（详见流程第 9 步）
+- 下载产物：zip 压缩包（内含 `page_1.png` 等手写稿页面图）。下载接口为 `POST /api/v1/handwrite-download/convert-cp-text-quark`（FormData 含 fullText/fontType/paperBgType/orderNo/clientId 等），成功后返回 JSON 中的 `zipUrl` 直链（`cos.allto.top/auto/zip/...`，带签名 token，会过期）；页面同时把该直链放进「下载完成」弹窗里「点我保存文件」的 `<a href>`，并触发浏览器下载事件。**DOM 里的这个 href 是最可靠的取链入口**（详见流程第 8 步路径 C）
 
 ## 三、输入处理
 
@@ -43,10 +43,11 @@ description: "通过浏览器自动化操作凹凸工坊（autohanding.com）生
 7. 点击「下载文件」，弹窗出现后输入激活码 `WdUD1-PNpo1-3PF4Y-gpe8x-FFXTJ`，确认。
    - 激活码输入框：弹窗里唯一 `placeholder="请输入激活码"` 的 text input（页面上其余可见 input 是滑条 range，不要误选）。
    - 确认按钮：用精确选择器 `.activation-input-dialog .confirm-activation-btn`，**不要**用宽泛的 `has-text` 正则（会误中主「下载文件」按钮）。
-8. 确认激活后，**同时监听两条下载路径**（两个操作一起尝试）：
+8. 确认激活后，**同时监听两条下载路径**（A/B 两个操作一起尝试），均失败则走路径 C：
    - **路径 A（首选，新版可靠）**：用浏览器下载事件捕获——`page.waitForEvent('download')` + `download.saveAs()` 直接把 zip 存到工作空间。blob 直链形如 `blob:https://www.autohanding.com/...`。
    - **路径 B（兜底）**：从网络请求或下载元素 href 捕获完整 zip 直链（`cos.allto.top/auto/zip/...`，含完整 token，不可截断——token 截断会导致 403），用命令下载。
    - 若两条路径都未触发：点击页面兜底链接「没有下载到恢复文件？点击」重新触发下载。
+   - **路径 C（浏览器存盘失效时的强兜底，2026-10-12 实测有效）**：症状是页面显示「下载完成」但 Downloads 目录里只有 `未确认 *.crdownload` 卡死不动（浏览器下载层 bug，见注意事项）。处理：**重新点击一次「下载文件」**——实测不会重新转换、不会重复扣次（网络日志无新的 convert 请求），会直接复开「下载完成」弹窗；然后用 `browser_evaluate` 抓取 DOM 中 `href` 含 `cos.allto.top/auto/zip/` 的 `<a>`（即「点我保存文件」链接），取出完整直链，**立即**用 curl 下载到工作空间（token 会过期，`e` 参数即过期时间戳）。最后用 `zipfile.testzip()` 校验完整性。
 9. 交付 zip 原包给用户（**不要解压**）。
 
 ## 五、输出交付物
@@ -56,11 +57,17 @@ description: "通过浏览器自动化操作凹凸工坊（autohanding.com）生
 
 ## 六、注意事项
 
+- **TRAE 更新引发的浏览器下载层 bug（2026-10-12 实测）**：TRAE 客户端更新后，内置浏览器可能出现「页面显示下载完成、文件却落不了盘」的问题。
+  - 症状：`Downloads` 目录只有 `未确认 *.crdownload` 且字节数冻结不再增长；重试点「下载文件」也不产生新下载任务；页面侧一切正常（预览成功、激活成功、弹「下载完成」）。
+  - 判定方法：查网络日志——若 `POST /api/v1/handwrite-download/convert-cp-text-quark` 和 `POST /api/cp/order/deducted` 都成功，说明**服务端 zip 已生成、扣次正常，问题只在浏览器存盘**，不要重新走激活流程（会重复扣次）。
+  - 处理：直接走流程第 8 步**路径 C**（从「下载完成」弹窗 DOM 取 `cos.allto.top` 直链 → curl 下载），绕开浏览器下载管理器，实测一次成功。
+  - 卡死的 `未确认 *.crdownload` 是死文件，可提醒用户删除。
+  - 背景佐证：报错栈来自 Electron 渲染层（`node:electron/js2c/...`），说明卡点在 TRAE 浏览器壳的下载管理器，而非页面 JS。
 - **激活码有每日免费使用次数上限**：内置激活码 `WdUD1-PNpo1-3PF4Y-gpe8x-FFXTJ` 实测可用，但每日有免费次数配额，用尽后弹窗提示「已达免费福利激活码每日使用次数上限，请付费获取激活码」。此时当天无法继续下载，需等次日重置，或请用户自行购买/提供新激活码。多次重复测试会快速消耗配额，下载成功后勿反复触发。
 - 下载功能依赖激活码，本 skill 内置激活码已实测可用；若页面提示激活码失效，请用户手动提供新激活码后继续。
 - 预览图是压缩版，最终成品以下载的 zip 内图片为准。
 - 下载链接 token 必须完整复制，省略号截断会导致下载失败（error: invalid download token format）。
 - 预览成功后必须点掉「预览生成成功」toast 的「确定」按钮，否则遮挡主下载按钮（实测报 preview-result-dialog intercepts pointer events）。
 - 激活码弹窗里输入框用 `placeholder="请输入激活码"` 精确定位；确认按钮用 `.activation-input-dialog .confirm-activation-btn`，勿用宽泛 has-text（会误中主「下载文件」按钮）。
-- 下载优先用浏览器 download 事件（`waitForEvent('download')` + `saveAs()`，blob 直链），与 cos.allto.top 直链捕获**同时监听**；两条路径都失败时可点「没有下载到恢复文件？点击」重新触发。
+- 下载优先用浏览器 download 事件（`waitForEvent('download')` + `saveAs()`，blob 直链），与 cos.allto.top 直链捕获**同时监听**；两条路径都失败时可点「没有下载到恢复文件？点击」重新触发，仍失败则走路径 C（DOM 取直链 → curl 下载，绕开浏览器下载管理器）。
 - 若浏览器自动化环境无法捕获下载链接，可让用户手动点击下载或改用真实浏览器下载。
